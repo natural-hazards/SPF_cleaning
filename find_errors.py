@@ -1,11 +1,9 @@
 import sys
 import argparse
-
-from obspy import read
-
 import pandas as pd
 import numpy as np
 
+from obspy import read
 from sklearn.cluster import KMeans
 
 #Deterministic staff
@@ -51,17 +49,21 @@ def event_features_from_mseed(mseed, n_fft: int) -> np.ndarray:
     return np.concatenate(transformed_data, axis=0)
 
 #Dataframe for the CSV with the results
-corrupted = pd.DataFrame(columns=["amp_treshold", "amp_treshold_mean", "mean_problem", "zeros_problem", "kmeans_corrupted"])
+corrupted = pd.DataFrame(columns=["amp_treshold", "amp_treshold_mean", "mean_problem", "zeros_problem", "kmeans_corrupted", "NaN"])
 corrupted.index.name = "event"
 
 #Parse arguments
 parser = argparse.ArgumentParser()
 #txt file with the list of mseed files
 parser.add_argument('--mseed_list', dest='mseed_list_txt', type=str, help='List of paths to mseeds')
+#csv output filename
+parser.add_argument('--output', dest='output', type=str, default='output.csv',
+                    help ='Output csv filename. Default: output.csv')
 
 # Add FFT length arg (samples)
 parser.add_argument('--n_fft', dest='n_fft', type=int, default=4096,
                     help='Fixed FFT length in samples (trim/pad). Default: 4096')
+
 #Random seed
 parser.add_argument('--seed', dest='seed', type=int, default=0,
                     help='Random seed for KMeans. Default: 0')
@@ -77,22 +79,22 @@ mean_treshold = .95
 
 zero_treshold = .4
 
-
 with open(args.mseed_list_txt) as f:
     filenames = f.read().splitlines()
 max_value = 0.0
-
 
 # Collect KMeans features for ALL events
 X = []
 valid_files = []
 
+print("starting deterministic cleaning")
+
 for filename in filenames:
+    print(f"reading {filename}")
     mseed = read(filename)
     mseed.sort(keys=["channel"])
     
     problems = {"amp_treshold" : "", "amp_treshold_mean" : "", "mean_problem" : "", "zeros_problem" : ""}
-
     for ch in mseed:
         if check_amp_treshold(ch.data):
             problems["amp_treshold"] += ch.id[-1]
@@ -115,7 +117,14 @@ for filename in filenames:
                 corrupted.loc[filename, key] = value
     #K-means preparation
     transforemd_data = event_features_from_mseed(mseed, n_fft=args.n_fft)
-    X.append(transforemd_data)
+    if np.isnan(transforemd_data).any():
+        corrupted.loc[filename, "NaN"] = True
+    else:
+        X.append(transforemd_data)
+        valid_files.append(filename)
+
+print("Deterministic cleaning done")
+print("Starting k-means")
 
 # Fit KMeans on valid feature rows
 if len(X) > 1:
@@ -128,10 +137,9 @@ if len(X) > 1:
     counts = np.bincount(labels)
     minority_cluster = int(np.argmin(counts))
 
-    for fn, lab in zip(filenames, labels):
+    for fn, lab in zip(valid_files, labels):
         if int(lab) != minority_cluster:
             continue
-        #corrupted.loc[fn, "kmeans_cluster"] = int(lab)
         corrupted.loc[fn, "kmeans_corrupted"] = (int(lab) == minority_cluster)
 
-corrupted.to_csv("corrupted.csv")
+corrupted.to_csv(args.output)
