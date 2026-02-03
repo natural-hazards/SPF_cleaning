@@ -6,6 +6,10 @@ import numpy as np
 from obspy import read
 from sklearn.cluster import KMeans
 
+from autoencoder import AutoencoderCleaner, AEConfig
+
+
+
 #Deterministic staff
 def check_amp_treshold(signal):
     return np.any(np.abs(signal) > amp_treshold)
@@ -64,9 +68,29 @@ parser.add_argument('--output', dest='output', type=str, default='output.csv',
 parser.add_argument('--n_fft', dest='n_fft', type=int, default=4096,
                     help='Fixed FFT length in samples (trim/pad). Default: 4096')
 
-#Random seed
+#Random seed for k means
 parser.add_argument('--seed', dest='seed', type=int, default=0,
                     help='Random seed for KMeans. Default: 0')
+
+
+#autoencoder
+parser.add_argument('--ok_mseed_list', dest='ok_mseed_list_txt', type=str, default=None,
+                    help='Optional: list of paths to OK mseeds for AE training')
+
+parser.add_argument('--ae_model_out', dest='ae_model_out', type=str, default=None,
+                    help='Optional: path to save trained AE model (torch .pt)')
+
+parser.add_argument('--ae_percentile', dest='ae_percentile', type=float, default=99.0,
+                    help='AE threshold percentile on OK validation. Default: 99')
+
+parser.add_argument('--ae_epochs', dest='ae_epochs', type=int, default=60,
+                    help='AE training epochs. Default: 60')
+
+parser.add_argument('--ae_device', dest='ae_device', type=str, default='cpu',
+                    help='AE device: cpu or cuda. Default: cpu')
+
+
+
 
 args = parser.parse_args()
 
@@ -82,6 +106,41 @@ zero_treshold = .4
 with open(args.mseed_list_txt) as f:
     filenames = f.read().splitlines()
 max_value = 0.0
+
+#autoencoder training
+cleaner = None
+if args.ok_mseed_list_txt is not None:
+    with open(args.ok_mseed_list_txt) as f:
+        ok_files = [ln.strip() for ln in f.read().splitlines() if ln.strip()]
+
+    print(f"Training autoencoder on {len(ok_files)} OK signals...")
+
+    X_ok = []
+    for fn in ok_files:
+        mseed_ok = read(fn)
+        mseed_ok.sort(keys=["channel"])
+        feats_ok = event_features_from_mseed(mseed_ok, n_fft=args.n_fft)
+        if np.isnan(feats_ok).any():
+            continue
+        X_ok.append(feats_ok)
+
+    if len(X_ok) < 10:
+        print("WARNING: Too few OK samples for AE; skipping AE training.")
+    else:
+        X_ok = np.vstack(X_ok).astype(np.float64)
+
+        cfg = AEConfig(
+            epochs=args.ae_epochs,
+            threshold_percentile=args.ae_percentile,
+            seed=args.seed,
+            device=args.ae_device,
+        )
+        cleaner = AutoencoderCleaner(cfg).fit(X_ok)
+        print(f"AE threshold set to {cleaner.threshold_:.6f}")
+
+        if args.ae_model_out:
+            cleaner.save(args.ae_model_out)
+            print(f"Saved AE model to {args.ae_model_out}")
 
 # Collect KMeans features for ALL events
 X = []
@@ -120,6 +179,13 @@ for filename in filenames:
     if np.isnan(transforemd_data).any():
         corrupted.loc[filename, "NaN"] = True
     else:
+         # AE scoring (if trained)
+        if cleaner is not None:
+            ae_score = float(cleaner.score(transforemd_data)[0])
+        if ae_score > cleaner.threshold_:
+            corrupted.loc[filename, "ae_score"] = ae_score
+            #corrupted.loc[filename, "ae_corrupted"] = bool(ae_score > cleaner.threshold_)
+
         X.append(transforemd_data)
         valid_files.append(filename)
 
