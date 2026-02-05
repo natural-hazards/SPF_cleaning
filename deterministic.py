@@ -1,16 +1,72 @@
 import numpy as np
 
-#Deterministic staff
-def check_amp_threshold(signal, amp_threshold = 1):
-    return np.any(np.abs(signal) > amp_threshold)
+class Deterministic_tester:
+    def __init__(
+        self,
+        amp_threshold=1.0,
+        amp_threshold_multiplier=.8,
+        amp_threshold_ratio=.35,
+        mean_threshold=.95,
+        zero_threshold=.4,
+        mean_multiplier=1.e5,
+        trace_ratio=1.e1,
+        correlation_level=0.6
+    ):
+        self.amp_threshold = amp_threshold
+        self.amp_threshold_multiplier = amp_threshold_multiplier
+        self.amp_threshold_ratio = amp_threshold_ratio
+        self.mean_threshold = mean_threshold
+        self.zero_threshold = zero_threshold
+        self.mean_multiplier = mean_multiplier
+        self.trace_ratio = trace_ratio
+        self.correlation_level = correlation_level     
 
-def check_amp_threshold_ratio(signal, amp_threshold = 1, amp_threshold_multiplier = .8, amp_threshold_ratio = .95):
-    return np.mean(np.abs(signal) >= amp_threshold_multiplier * amp_threshold) > amp_threshold_ratio
+        print(self.amp_threshold)
+        print(self.amp_threshold_multiplier)   
 
-def check_mean(signal, mean_threshold = .95):
-    abs_arr = np.abs(signal)
-    mean_abs = abs_arr.mean()
-    return np.mean(abs_arr <= mean_abs) >= mean_threshold
+    # ============================
+    # Michael
+    # ============================
+    def check_amp_threshold(self,signal):
+        return np.any(np.abs(signal) > self.amp_threshold)
 
-def check_zeros(signal, zero_threshold = .4):
-    return np.mean(signal == 0.0) >= zero_threshold
+    def check_amp_threshold_ratio(self, signal):
+        return np.mean(np.abs(signal) >= self.amp_threshold_multiplier * self.amp_threshold) > self.amp_threshold_ratio
+
+    def check_mean(self, signal):
+        abs_signal = np.abs(signal)
+        mean_abs = abs_signal.mean()
+        return np.mean(abs_signal <= mean_abs) >= self.mean_threshold
+
+    def check_zeros(self, signal):
+        return np.mean(signal == 0.0) >= self.zero_threshold
+
+    # ============================
+    # Slavek
+    # ============================
+
+    def check_mean_vs_max_amp(self, signal):
+        abs_signal = np.abs(signal)
+        max_abs = np.max(abs_signal)
+        mean_abs = np.mean(abs_signal)
+        return max_abs > self.mean_multiplier * mean_abs
+
+    def check_traces_amp_ratio(self, signal_Z, signal_N, signal_E):
+        zmax = np.max(np.abs(signal_Z))
+        nmax = np.max(np.abs(signal_N))
+        emax = np.max(np.abs(signal_E))
+
+        z2n = zmax/nmax
+        z2e = zmax/emax
+        n2e = nmax/emax
+
+        r = False
+        if (z2n > self.trace_ratio) or (z2n < 1 / self.trace_ratio):
+            r = True
+        if (z2e > self.trace_ratio) or (z2e < 1 / self.trace_ratio):
+            r = True
+        if (n2e > self.trace_ratio) or (n2e < 1 / self.trace_ratio):
+            r = True
+        return r
+
+    

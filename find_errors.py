@@ -7,7 +7,7 @@ from obspy import read
 from sklearn.cluster import KMeans
 
 from signal_proc import zscore, fft_features, event_features_from_mseed
-from deterministic import check_amp_threshold, check_amp_threshold_ratio, check_mean, check_zeros
+from deterministic import Deterministic_tester
 from autoencoder import AutoencoderCleaner, AEConfig
 
 #Parse arguments
@@ -145,14 +145,6 @@ parser.add_argument(
 
 args = parser.parse_args()
 
-#parameters
-amp_threshold = 1
-amp_threshold_multiplier = .8
-amp_threshold_ratio = .35
-
-mean_threshold = .95
-zero_threshold = .4
-
 #Read OK mseeds and train autoencoder
 cleaner = None
 if args.ok_mseed_list_txt is not None:
@@ -200,6 +192,18 @@ corrupted.index.name = "event"
 with open(args.mseed_list_txt) as f:
     filenames = f.read().splitlines()
 
+d_test = Deterministic_tester(
+    amp_threshold = args.amp_threshold,
+    amp_threshold_multiplier = args.amp_threshold_multiplier,
+    amp_threshold_ratio = args.amp_threshold_ratio,
+    mean_threshold = args.mean_threshold,
+    zero_threshold = args.zero_threshold,
+    mean_multiplier = 1.e5, #Slavek
+    trace_ratio = 1.e1, #Slavek
+    correlation_level = 0.6 #Slavek
+)
+
+
 for filename in filenames:
     #read mseed
     print(f"[INFO] reading {filename}.")
@@ -208,17 +212,18 @@ for filename in filenames:
     #Deterministic tests
     problems = {"amp_threshold" : "", "amp_threshold_mean" : "", "mean_problem" : "", "zeros_problem" : ""}
     for ch in mseed:
-        if check_amp_threshold(ch.data, args.amp_threshold):
+        if d_test.check_amp_threshold(ch.data):
             problems["amp_threshold"] += ch.id[-1]
-        if check_amp_threshold_ratio(ch.data, args.amp_threshold, args.amp_threshold_multiplier, args.amp_threshold_ratio):
+        if d_test.check_amp_threshold_ratio(ch.data):
             problems["amp_threshold_mean"] += ch.id[-1]
-        if check_mean(ch.data, args.mean_threshold):
+        if d_test.check_mean(ch.data):
             problems["mean_problem"] += ch.id[-1]
-        if check_zeros(ch.data, args.zero_threshold):
+        if d_test.check_zeros(ch.data):
             problems["zeros_problem"] += ch.id[-1]
         for key, value in problems.items():
             if value != "":
                 corrupted.loc[filename, key] = value
+
     #K-means preparation
     transforemd_data = event_features_from_mseed(mseed, n_fft=args.n_fft)
     #Autoencoder tests
