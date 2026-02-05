@@ -6,114 +6,160 @@ import numpy as np
 from obspy import read
 from sklearn.cluster import KMeans
 
+from signal_proc import zscore, fft_features, event_features_from_mseed
+from deterministic import check_amp_threshold, check_amp_threshold_ratio, check_mean, check_zeros
 from autoencoder import AutoencoderCleaner, AEConfig
-
-
-
-#Deterministic staff
-def check_amp_treshold(signal):
-    return np.any(np.abs(signal) > amp_treshold)
-
-def check_amp_treshold_ratio(signal):
-    return np.mean(np.abs(signal) >= amp_treshold_multiplier * amp_treshold) > amp_treshold_ratio
-
-def check_mean(signal):
-    abs_arr = np.abs(signal)
-    mean_abs = abs_arr.mean()
-    return np.mean(abs_arr <= mean_abs) >= mean_treshold
-
-def check_zeros(signal):
-    return np.mean(signal == 0.0) >= zero_treshold
-
-#K-means staff
-def zscore(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    x = x.astype(np.float64, copy=False)
-    mu = x.mean()
-    sd = x.std()
-    if sd < eps:
-        return np.zeros_like(x, dtype=np.float64)
-    return (x - mu) / sd
-
-def fft_features(x: np.ndarray, n_fft: int, use_log: bool = True) -> np.ndarray:
-    X = np.fft.rfft(x, n=n_fft)  # pad or trim here
-    mag = np.abs(X)
-    if use_log:
-        mag = np.log1p(mag)
-    return mag
-
-def event_features_from_mseed(mseed, n_fft: int) -> np.ndarray:
-    """
-    z-score -> fixed length -> FFT mag -> concat.
-    """
-    transformed_data = []
-    for i in range(3):
-        sig = mseed[i].data
-        sig = zscore(sig)
-        transformed_data.append(fft_features(sig, n_fft=n_fft, use_log=True))
-    return np.concatenate(transformed_data, axis=0)
-
-#Dataframe for the CSV with the results
-corrupted = pd.DataFrame(columns=["amp_treshold", "amp_treshold_mean", "mean_problem", "zeros_problem", "kmeans_corrupted", "NaN"])
-corrupted.index.name = "event"
 
 #Parse arguments
 parser = argparse.ArgumentParser()
-#txt file with the list of mseed files
-parser.add_argument('--mseed_list', dest='mseed_list_txt', type=str, help='List of paths to mseeds')
-#csv output filename
-parser.add_argument('--output', dest='output', type=str, default='output.csv',
-                    help ='Output csv filename. Default: output.csv')
 
-# Add FFT length arg (samples)
-parser.add_argument('--n_fft', dest='n_fft', type=int, default=4096,
-                    help='Fixed FFT length in samples (trim/pad). Default: 4096')
+# ============================
+# Input / Output
+# ============================
+parser.add_argument(
+    '--mseed_list',
+    dest='mseed_list_txt',
+    type=str,
+    help='List of paths to mseeds'
+)
 
-#Random seed for k means
-parser.add_argument('--seed', dest='seed', type=int, default=0,
-                    help='Random seed for KMeans. Default: 0')
+parser.add_argument(
+    '--ok_mseed_list',
+    dest='ok_mseed_list_txt',
+    type=str,
+    default=None,
+    help='Optional: list of paths to OK mseeds for AE training'
+)
 
+parser.add_argument(
+    '--output',
+    dest='output',
+    type=str,
+    default='output.csv',
+    help ='Output csv filename. Default: output.csv'
+)
 
-#autoencoder
-parser.add_argument('--ok_mseed_list', dest='ok_mseed_list_txt', type=str, default=None,
-                    help='Optional: list of paths to OK mseeds for AE training')
+# ============================
+# Signal processing
+# ============================
 
-parser.add_argument('--ae_model_out', dest='ae_model_out', type=str, default=None,
-                    help='Optional: path to save trained AE model (torch .pt)')
+parser.add_argument(
+    '--n_fft',
+    dest='n_fft', 
+    type=int,
+    default=4096,
+    help='Fixed FFT length in samples (trim/pad). Default: 4096'
+)
 
-parser.add_argument('--ae_percentile', dest='ae_percentile', type=float, default=99.0,
-                    help='AE threshold percentile on OK validation. Default: 99')
+# ============================
+# K-means
+# ============================
 
-parser.add_argument('--ae_epochs', dest='ae_epochs', type=int, default=60,
-                    help='AE training epochs. Default: 60')
+parser.add_argument(
+    '--seed',
+    dest='seed',
+    type=int,
+    default=0,
+    help='Random seed for KMeans. Default: 0'
+)
 
-parser.add_argument('--ae_device', dest='ae_device', type=str, default='cpu',
-                    help='AE device: cpu or cuda. Default: cpu')
+# ============================
+# Autoencoder
+# ============================
 
+parser.add_argument(
+    '--ae_model_out',
+    dest='ae_model_out',
+    type=str,
+    default=None,
+    help='Optional: path to save trained AE model (torch .pt)'
+)
 
+parser.add_argument(
+    '--ae_percentile',
+    dest='ae_percentile',
+    type=float,
+    default=99.0,
+    help='AE threshold percentile on OK validation. Default: 99'
+)
 
+parser.add_argument(
+    '--ae_epochs',
+    dest='ae_epochs',
+    type=int,
+    default=60,
+    help='AE training epochs. Default: 60'
+)
+
+parser.add_argument(
+    '--ae_device',
+    dest='ae_device',
+    type=str,
+    default='cpu',
+    help='AE device: cpu or cuda. Default: cpu'
+)
+
+# ============================
+# Deterministic cleaning parameters
+# ============================
+
+parser.add_argument(
+    '--amp_threshold',
+    dest='amp_threshold',
+    type = float,
+    default = 1.0,
+    help='Max amplitude threshold.'
+)
+
+parser.add_argument(
+    '--amp_threshold_multiplier',
+    dest='amp_threshold_multiplier',
+    type = float,
+    default = .8,
+    help='Max amplitude threshold coeff.'
+)
+
+parser.add_argument(
+    '--amp_threshold_ratio',
+    dest='amp_threshold_ratio',
+    type = float,
+    default = .35,
+    help='Max allowed ratio of values greater than max coff * amplitude threshold.'
+)
+
+parser.add_argument(
+    '--mean_threshold',
+    dest='mean_threshold',
+    type = float,
+    default = .95,
+    help='Max allowd ratio of values less than mean.'
+)
+
+parser.add_argument(
+    '--zero_threshold',
+    dest='zero_threshold',
+    type = float,
+    default = .4,
+    help='Max allowd ratio of values equal to zero.'
+)
 
 args = parser.parse_args()
 
 #parameters
-amp_treshold = 1
-amp_treshold_multiplier = .8
-amp_treshold_ratio = .35
+amp_threshold = 1
+amp_threshold_multiplier = .8
+amp_threshold_ratio = .35
 
-mean_treshold = .95
+mean_threshold = .95
+zero_threshold = .4
 
-zero_treshold = .4
-
-with open(args.mseed_list_txt) as f:
-    filenames = f.read().splitlines()
-max_value = 0.0
-
-#autoencoder training
+#Read OK mseeds and train autoencoder
 cleaner = None
 if args.ok_mseed_list_txt is not None:
     with open(args.ok_mseed_list_txt) as f:
         ok_files = [ln.strip() for ln in f.read().splitlines() if ln.strip()]
 
-    print(f"Training autoencoder on {len(ok_files)} OK signals...")
+    print(f"[INFO] Training autoencoder on {len(ok_files)} OK signals...")
 
     X_ok = []
     for fn in ok_files:
@@ -125,7 +171,7 @@ if args.ok_mseed_list_txt is not None:
         X_ok.append(feats_ok)
 
     if len(X_ok) < 10:
-        print("WARNING: Too few OK samples for AE; skipping AE training.")
+        print("[WARNING] Too few OK samples for AE; skipping AE training.")
     else:
         X_ok = np.vstack(X_ok).astype(np.float64)
 
@@ -146,51 +192,49 @@ if args.ok_mseed_list_txt is not None:
 X = []
 valid_files = []
 
-print("starting deterministic cleaning")
+#Dataframe for the CSV with the results
+corrupted = pd.DataFrame(columns=["amp_threshold", "amp_threshold_mean", "mean_problem", "zeros_problem", "kmeans_corrupted", "ae_score", "NaN"])
+corrupted.index.name = "event"
+
+
+with open(args.mseed_list_txt) as f:
+    filenames = f.read().splitlines()
 
 for filename in filenames:
-    print(f"reading {filename}")
+    #read mseed
+    print(f"[INFO] reading {filename}.")
     mseed = read(filename)
     mseed.sort(keys=["channel"])
-    
-    problems = {"amp_treshold" : "", "amp_treshold_mean" : "", "mean_problem" : "", "zeros_problem" : ""}
+    #Deterministic tests
+    problems = {"amp_threshold" : "", "amp_threshold_mean" : "", "mean_problem" : "", "zeros_problem" : ""}
     for ch in mseed:
-        if check_amp_treshold(ch.data):
-            problems["amp_treshold"] += ch.id[-1]
-            #corrupted.loc[filename, "amp_treshold"] = i
-
-        if check_amp_treshold_ratio(ch.data):
-            problems["amp_treshold_mean"] += ch.id[-1]
-            #corrupted.loc[filename, "amp_treshold_mean"] = i
-
-        if check_mean(ch.data):
+        if check_amp_threshold(ch.data, args.amp_threshold):
+            problems["amp_threshold"] += ch.id[-1]
+        if check_amp_threshold_ratio(ch.data, args.amp_threshold, args.amp_threshold_multiplier, args.amp_threshold_ratio):
+            problems["amp_threshold_mean"] += ch.id[-1]
+        if check_mean(ch.data, args.mean_threshold):
             problems["mean_problem"] += ch.id[-1]
-            #corrupted.loc[filename, "mean_problem"] = i
-
-        if check_zeros(ch.data):
+        if check_zeros(ch.data, args.zero_threshold):
             problems["zeros_problem"] += ch.id[-1]
-            #corrupted.loc[filename, "zeros_problem"] = i
-
         for key, value in problems.items():
             if value != "":
                 corrupted.loc[filename, key] = value
     #K-means preparation
     transforemd_data = event_features_from_mseed(mseed, n_fft=args.n_fft)
+    #Autoencoder tests
     if np.isnan(transforemd_data).any():
         corrupted.loc[filename, "NaN"] = True
     else:
          # AE scoring (if trained)
         if cleaner is not None:
             ae_score = float(cleaner.score(transforemd_data)[0])
-        if ae_score > cleaner.threshold_:
-            corrupted.loc[filename, "ae_score"] = ae_score
-            #corrupted.loc[filename, "ae_corrupted"] = bool(ae_score > cleaner.threshold_)
+            if ae_score > cleaner.threshold_:
+                corrupted.loc[filename, "ae_score"] = ae_score
 
         X.append(transforemd_data)
         valid_files.append(filename)
 
-print("Deterministic cleaning done")
-print("Starting k-means")
+print("[INFO] Starting k-means")
 
 # Fit KMeans on valid feature rows
 if len(X) > 1:
@@ -208,4 +252,5 @@ if len(X) > 1:
             continue
         corrupted.loc[fn, "kmeans_corrupted"] = (int(lab) == minority_cluster)
 
+print(f"[INFO] Print output to {args.output}.")
 corrupted.to_csv(args.output)
