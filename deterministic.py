@@ -88,4 +88,4 @@ class Deterministic_tester:
         #if (Z2N < corr_lev) or (Z2E < corr_lev) or (N2E < corr_lev):
             #self.status[ii] += 1
 
-        return (Z2N < corr_lev) or (Z2E < corr_lev) or (N2E < corr_lev)
+        return (Z2N < self.correlation_level) or (Z2E < self.correlation_level) or (N2E < self.correlation_level)
