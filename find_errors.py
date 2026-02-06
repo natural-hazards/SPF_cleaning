@@ -100,7 +100,7 @@ parser.add_argument(
 )
 
 # ============================
-# Deterministic cleaning parameters
+# Deterministic cleaning parameters (Michael)
 # ============================
 
 parser.add_argument(
@@ -185,9 +185,19 @@ X = []
 valid_files = []
 
 #Dataframe for the CSV with the results
-corrupted = pd.DataFrame(columns=["amp_threshold", "amp_threshold_mean", "mean_problem", "zeros_problem", "kmeans_corrupted", "ae_score", "NaN"])
+corrupted = pd.DataFrame(
+    columns=[
+        "amp_threshold",
+        "amp_threshold_mean",
+        "mean_problem",
+        "zeros_problem",
+        "mean_vs_max",
+        "traces_amp_ratio",
+        "traces_spectra",
+        "kmeans_corrupted",
+        "ae_score",
+        "NaN"])
 corrupted.index.name = "event"
-
 
 with open(args.mseed_list_txt) as f:
     filenames = f.read().splitlines()
@@ -203,14 +213,13 @@ d_test = Deterministic_tester(
     correlation_level = 0.6 #Slavek
 )
 
-
 for filename in filenames:
     #read mseed
     print(f"[INFO] reading {filename}.")
     mseed = read(filename)
     mseed.sort(keys=["channel"])
     #Deterministic tests
-    problems = {"amp_threshold" : "", "amp_threshold_mean" : "", "mean_problem" : "", "zeros_problem" : ""}
+    problems = {"amp_threshold" : "", "amp_threshold_mean" : "", "mean_problem" : "", "zeros_problem" : "", "mean_vs_max" : ""}
     for ch in mseed:
         if d_test.check_amp_threshold(ch.data):
             problems["amp_threshold"] += ch.id[-1]
@@ -220,15 +229,21 @@ for filename in filenames:
             problems["mean_problem"] += ch.id[-1]
         if d_test.check_zeros(ch.data):
             problems["zeros_problem"] += ch.id[-1]
+        if d_test.check_mean_vs_max_amp(ch.data):
+            problems["mean_vs_max"] += ch.id[-1]
         for key, value in problems.items():
             if value != "":
                 corrupted.loc[filename, key] = value
+        if d_test.check_traces_amp_ratio(mseed[0].data, mseed[1].data, mseed[2].data):
+            corrupted.loc[filename, "traces_amp_ratio"] = str(True)
+        if d_test.check_trace_spectra(mseed[0].data, mseed[1].data, mseed[2].data):
+            corrupted.loc[filename, "traces_spectra"] = str(True)
 
     #K-means preparation
     transforemd_data = event_features_from_mseed(mseed, n_fft=args.n_fft)
     #Autoencoder tests
     if np.isnan(transforemd_data).any():
-        corrupted.loc[filename, "NaN"] = True
+        corrupted.loc[filename, "NaN"] = str(True)
     else:
          # AE scoring (if trained)
         if cleaner is not None:

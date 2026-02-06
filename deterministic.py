@@ -69,4 +69,23 @@ class Deterministic_tester:
             r = True
         return r
 
-    
+    def check_trace_spectra(self, signal_Z, signal_N, signal_E):
+        z = signal_Z - np.median(signal_Z)
+        n = signal_N - np.median(signal_N)
+        e = signal_E - np.median(signal_E)
+        Z = np.abs(np.fft.fft(z))
+        N = np.abs(np.fft.fft(n))
+        E = np.abs(np.fft.fft(e))
+        Z = Z/np.linalg.norm(Z)
+        N = N/np.linalg.norm(N)
+        E = E/np.linalg.norm(E)
+        Z2N = np.correlate(Z, N)
+        Z2E = np.correlate(Z, E)
+        N2E = np.correlate(N, E)
+
+        #print("%5s corr_coeff Z-N %5.3f Z-E %5.3f N-E %5.3f" % (stat, Z2N, Z2E, N2E))
+
+        #if (Z2N < corr_lev) or (Z2E < corr_lev) or (N2E < corr_lev):
+            #self.status[ii] += 1
+
+        return (Z2N < corr_lev) or (Z2E < corr_lev) or (N2E < corr_lev)
