@@ -219,25 +219,41 @@ for filename in filenames:
     mseed = read(filename)
     mseed.sort(keys=["channel"])
     #Deterministic tests
-    problems = {"amp_threshold" : "", "amp_threshold_mean" : "", "mean_problem" : "", "zeros_problem" : "", "mean_vs_max" : ""}
+
+    #Single component
+    checks = {
+        "amp_threshold": d_test.check_amp_threshold,
+        "amp_threshold_mean": d_test.check_amp_threshold_ratio,
+        "mean_problem": d_test.check_mean,
+        "zeros_problem": d_test.check_zeros,
+        "mean_vs_max": d_test.check_mean_vs_max_amp,
+    }
+    problems = {key: "" for key in checks}
+
     for ch in mseed:
-        if d_test.check_amp_threshold(ch.data):
-            problems["amp_threshold"] += ch.id[-1]
-        if d_test.check_amp_threshold_ratio(ch.data):
-            problems["amp_threshold_mean"] += ch.id[-1]
-        if d_test.check_mean(ch.data):
-            problems["mean_problem"] += ch.id[-1]
-        if d_test.check_zeros(ch.data):
-            problems["zeros_problem"] += ch.id[-1]
-        if d_test.check_mean_vs_max_amp(ch.data):
-            problems["mean_vs_max"] += ch.id[-1]
-        for key, value in problems.items():
-            if value != "":
-                corrupted.loc[filename, key] = value
-        if d_test.check_traces_amp_ratio(mseed[0].data, mseed[1].data, mseed[2].data):
-            corrupted.loc[filename, "traces_amp_ratio"] = str(True)
-        if d_test.check_trace_spectra(mseed[0].data, mseed[1].data, mseed[2].data):
-            corrupted.loc[filename, "traces_spectra"] = str(True)
+        channel_id = ch.id[-1]
+
+        for key, func in checks.items():
+            result = func(ch.data)
+            if result:
+                problems[key] += f"{channel_id}: {result} "
+
+    for key, value in problems.items():
+        if value:
+            corrupted.loc[filename, key] = value.rstrip()
+
+    #All three components
+    checks = {
+        "traces_amp_ratio": d_test.check_traces_amp_ratio,
+        "traces_spectra": d_test.check_trace_spectra,
+    }
+
+    data = [ch.data for ch in mseed[:3]]
+
+    for key, func in checks.items():
+        result = func(*data)
+        if result:
+            corrupted.loc[filename, key] = result
 
     #K-means preparation
     transforemd_data = event_features_from_mseed(mseed, n_fft=args.n_fft)
