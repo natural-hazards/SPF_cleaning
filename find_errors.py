@@ -140,7 +140,35 @@ parser.add_argument(
     dest='zero_threshold',
     type = float,
     default = .4,
-    help='Max allowd ratio of values equal to zero.'
+    help='Max allowed ratio of values equal to zero.'
+)
+
+# ============================
+# Deterministic cleaning parameters (Slavek)
+# ============================
+
+parser.add_argument(
+    '--mean_multiplier',
+    dest='mean_multiplier',
+    type = float,
+    default = 1.e5,
+    help='Max allowed ratio of max value and mean'
+)
+
+parser.add_argument(
+    '--trace_ratio',
+    dest='trace_ratio',
+    type = float,
+    default = 1.e1,
+    help='Max allowed ratio of max values of channels'
+)
+
+parser.add_argument(
+    '--correlation_level',
+    dest='correlation_level',
+    type = float,
+    default = 0.6,
+    help='Minimum correlation level of spectra'
 )
 
 args = parser.parse_args()
@@ -208,9 +236,9 @@ d_test = Deterministic_tester(
     amp_threshold_ratio = args.amp_threshold_ratio,
     mean_threshold = args.mean_threshold,
     zero_threshold = args.zero_threshold,
-    mean_multiplier = 1.e5, #Slavek
-    trace_ratio = 1.e1, #Slavek
-    correlation_level = 0.6 #Slavek
+    mean_multiplier = args.mean_multiplier, #Slavek
+    trace_ratio = args.trace_ratio,
+    correlation_level = args.correlation_level #Slavek
 )
 
 for filename in filenames:
