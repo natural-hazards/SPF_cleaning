@@ -237,7 +237,7 @@ d_test = Deterministic_tester(
     mean_threshold = args.mean_threshold,
     zero_threshold = args.zero_threshold,
     mean_multiplier = args.mean_multiplier, #Slavek
-    trace_ratio = args.trace_ratio,
+    trace_ratio = args.trace_ratio, #Slavek
     correlation_level = args.correlation_level #Slavek
 )
 
