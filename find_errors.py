@@ -6,9 +6,10 @@ import numpy as np
 from obspy import read
 from sklearn.cluster import KMeans
 
-from signal_proc import zscore, fft_features, event_features_from_mseed
+from signal_proc import zscore, fft_features, event_features_from_mseed, video_features_from_mseed
 from deterministic import Deterministic_tester
 from autoencoder import AutoencoderCleaner, AEConfig
+from autoencoder_video import AutoencoderCleaner, AEConfig
 
 #Parse arguments
 parser = argparse.ArgumentParser()
@@ -99,6 +100,17 @@ parser.add_argument(
     help='AE device: cpu or cuda. Default: cpu'
 )
 
+parser.add_argument('--ae_working_length', type=int, default=8192,
+                    help='Pad/crop length (samples) before windowing. Default: 8192')
+parser.add_argument('--ae_win_len', type=int, default=256,
+                    help='Sliding window length (samples). Default: 256')
+parser.add_argument('--ae_hop', type=int, default=64,
+                    help='Window hop (samples). Default: 64')
+parser.add_argument('--ae_agg', type=str, default="max",
+                    help='Aggregate window scores -> event score: max|p95|mean. Default: max')
+parser.add_argument('--ae_p', type=float, default=95.0,
+                    help='Percentile if ae_agg=p95. Default: 95')
+
 # ============================
 # Deterministic cleaning parameters (Michael)
 # ============================
@@ -174,14 +186,14 @@ parser.add_argument(
 args = parser.parse_args()
 
 #Read OK mseeds and train autoencoder
-cleaner = None
+"""cleaner = None
 if args.ok_mseed_list_txt is not None:
     with open(args.ok_mseed_list_txt) as f:
         ok_files = [ln.strip() for ln in f.read().splitlines() if ln.strip()]
 
     print(f"[INFO] Training autoencoder on {len(ok_files)} OK signals...")
 
-    X_ok = []
+     X_ok = []
     for fn in ok_files:
         mseed_ok = read(fn)
         mseed_ok.sort(keys=["channel"])
@@ -207,7 +219,49 @@ if args.ok_mseed_list_txt is not None:
         if args.ae_model_out:
             cleaner.save(args.ae_model_out)
             print(f"Saved AE model to {args.ae_model_out}")
+ """
+# Read OK mseeds and train autoencoder (WINDOW-based)
+cleaner = None
+if args.ok_mseed_list_txt is not None:
+    with open(args.ok_mseed_list_txt) as f:
+        ok_files = [ln.strip() for ln in f.read().splitlines() if ln.strip()]
 
+    print(f"[INFO] Training autoencoder on {len(ok_files)} OK signals (sliding windows)...")
+
+    X_ok_all = []
+    for fn in ok_files:
+        mseed_ok = read(fn)
+        mseed_ok.sort(keys=["channel"])
+
+        vid_ok = video_features_from_mseed(
+            mseed_ok,
+            working_length=args.ae_working_length,
+            win_len=args.ae_win_len,
+            hop=args.ae_hop,
+        )  # (N, win_len, 3)
+
+        if np.isnan(vid_ok).any():
+            continue
+
+        X_ok_all.append(vid_ok)
+
+    if len(X_ok_all) == 0:
+        print("[WARNING] No usable OK windows for AE; skipping AE training.")
+    else:
+        X_ok = np.concatenate(X_ok_all, axis=0).astype(np.float32)  # (M, win_len, 3)
+
+        cfg = AEConfig(
+            epochs=args.ae_epochs,
+            threshold_percentile=args.ae_percentile,
+            seed=args.seed,
+            device=args.ae_device,
+        )
+        cleaner = AutoencoderCleaner(cfg).fit(X_ok)
+        print(f"AE threshold set to {cleaner.threshold_:.6f}")
+
+        if args.ae_model_out:
+            cleaner.save(args.ae_model_out)
+            print(f"Saved AE model to {args.ae_model_out}")
 # Collect KMeans features for ALL events
 X = []
 valid_files = []
@@ -284,7 +338,7 @@ for filename in filenames:
             corrupted.loc[filename, key] = result
 
     #K-means preparation
-    transforemd_data = event_features_from_mseed(mseed, n_fft=args.n_fft)
+    """ transforemd_data = event_features_from_mseed(mseed, n_fft=args.n_fft)
     #Autoencoder tests
     if np.isnan(transforemd_data).any():
         corrupted.loc[filename, "NaN"] = str(True)
@@ -295,6 +349,36 @@ for filename in filenames:
             if ae_score > cleaner.threshold_:
                 corrupted.loc[filename, "ae_score"] = ae_score
 
+        X.append(transforemd_data)
+        valid_files.append(filename) """
+    transforemd_data = event_features_from_mseed(mseed, n_fft=args.n_fft)
+
+    # AE (window-based) scoring
+    vid = video_features_from_mseed(
+        mseed,
+        working_length=args.ae_working_length,
+        win_len=args.ae_win_len,
+        hop=args.ae_hop,
+    )
+
+    if np.isnan(transforemd_data).any() or np.isnan(vid).any():
+        corrupted.loc[filename, "NaN"] = str(True)
+    else:
+        if cleaner is not None:
+            win_scores = cleaner.score(vid)  # (N_windows,)
+            if args.ae_agg == "max":
+                ae_score = float(np.max(win_scores))
+            elif args.ae_agg == "mean":
+                ae_score = float(np.mean(win_scores))
+            elif args.ae_agg == "p95":
+                ae_score = float(np.percentile(win_scores, args.ae_p))
+            else:
+                raise ValueError(f"Unknown --ae_agg {args.ae_agg}")
+
+            if ae_score > cleaner.threshold_:
+                corrupted.loc[filename, "ae_score"] = ae_score
+
+        # KMeans data (unchanged)
         X.append(transforemd_data)
         valid_files.append(filename)
 
