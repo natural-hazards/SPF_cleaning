@@ -128,6 +128,12 @@ def main():
     )
 
     ap.add_argument(
+        "--blacklist",
+        default="blacklist.csv",
+        help="Output CSV file for blacklisted events (default: blacklist.csv)"
+    )
+
+    ap.add_argument(
             "--p_prefix",
             type=int,
             default=1,
@@ -142,14 +148,30 @@ def main():
     
     id_col = 'path'
     event_type_col = 'type'
+    blacklist_col = 'event'
     st_cols = [x for s in args.stations for x in (s + '_P', s + '_S')]
     print(st_cols)
     events = {}
 
     years_str = [str(y) for y in args.years]
     statistics = {}
+    statistics_skipped = {}
     for event_type in args.types:
         statistics[event_type] = 0
+        statistics_skipped[event_type] = 0
+
+    blacklist = set()
+    #load blacklist
+    try:
+        blacklist_df = pd.read_csv(args.blacklist)
+        blacklist = set(blacklist_df[blacklist_col].dropna().unique())
+        print(f"Blacklist loaded from {args.blacklist}, {len(blacklist)} entries.")
+    except FileNotFoundError:
+        print(f"Blacklist file '{args.blacklist}' not found. No events will be blacklisted.")
+    except Exception as e:
+        print(f"Error reading blacklist CSV file: {e}")
+
+    
 
 
     for csv_path, priority in args.source:
@@ -187,12 +209,14 @@ def main():
             # update attributes dynamically
             for col in st_cols:
                 time = getattr(row, col)
+
                 if not math.isnan(time):
                     obj.update(col[:-2], col[-1], time, priority)
                 
             
         #print(df)
         #print(priority)
+
     #prepare data structures for the output
     dataframes = []
     labels = []
@@ -205,23 +229,37 @@ def main():
             P_arrival = event.get_arrival_time(st, 'P')
             if P_arrival is None:
                 continue
-            mseed_path = f'{root}/{event_name}/{st}_{event_type}.mseed'
+            mseed_path = f'{event_name}/{st}_{event_type}.mseed'
 
-            error = False
+            if mseed_path in blacklist:
+                print(f"[INFO] Skipping blacklisted file: {mseed_path}")
+                statistics_skipped[event_type] += 1
+                continue
+
+            #add root to path
+            mseed_path = f'{root}/{mseed_path}'
+
             try:
                 st = read(mseed_path)
 
             except FileNotFoundError:
                 print(f"[ERROR] File '{mseed_path}' not found.")
-                error = True
+                statistics_skipped[event_type] += 1
                 continue
                 #TODO report
             except Exception as e:
                 print(f"[ERROR] reading Excel file {mseed_path}: {e}")
+                statistics_skipped[event_type] += 1
                 continue
 
             event_data = {}
-            t1 = st[0].stats.starttime + max(0, P_arrival - args.p_prefix)
+
+            if P_arrival < args.p_prefix:
+                print(f"[ERROR] P arrival {P_arrival} is less than prefix {args.p_prefix} for file {mseed_path}")
+                statistics_skipped[event_type] += 1
+                continue
+
+            t1 = st[0].stats.starttime + P_arrival - args.p_prefix
             t2 = st[0].stats.endtime
 
             st.trim(t1, t2, pad=True, fill_value=0)
@@ -230,9 +268,11 @@ def main():
             l3 = len(st[2].data)
             if not (l1 == l2 and l2 == l3):
                 print(f"[ERROR] a problem with channel lengths {l1} {l2} {l3}")
+                statistics_skipped[event_type] += 1
             for tr in st:
                 event_data[tr.stats.channel[-1]] = tr.data
                 
+            
 
             # Create DataFrame with correct column names
             time_series = pd.DataFrame(event_data)
@@ -245,7 +285,8 @@ def main():
 
             #print(statistics)
         #print(f"{ev} CEL P: {events[ev].get_arrival_time('CEL', 'P')}")
-    print(statistics)
+    print(f'statistics: {statistics}')
+    print(f'statistics_skipped: {statistics_skipped}')
 
     # Final structure
     #final_data = [dataframes, np.array(labels), np.array(filenames)]
