@@ -221,7 +221,8 @@ def main():
     dataframes = []
     labels = []
     filenames = []
-
+    max_len = 0
+    min_len = float('inf')
     for event_name in events.keys():
         event = events[event_name]
         event_type = event.get_type()
@@ -269,6 +270,11 @@ def main():
             if not (l1 == l2 and l2 == l3):
                 print(f"[ERROR] a problem with channel lengths {l1} {l2} {l3}")
                 statistics_skipped[event_type] += 1
+                continue
+            
+            max_len = max(l1, max_len)
+            min_len = min(l1, min_len)
+
             for tr in st:
                 event_data[tr.stats.channel[-1]] = tr.data
                 
@@ -291,11 +297,11 @@ def main():
     # Final structure
     #final_data = [dataframes, np.array(labels), np.array(filenames)]
     final_data = [dataframes, np.array(labels)]
-
+    print(len(final_data[0]), len(final_data[1]))
         # Save to one pickle
     with open(args.out, "wb") as out_f:
         pickle.dump(final_data, out_f)
         print(f'{args.out} saved')
-
+    print(f'Max length: {max_len}, Min length: {min_len}')
 if __name__ == "__main__":
     main()
