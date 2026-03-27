@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 import re
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from obspy import read, UTCDateTime
@@ -126,6 +127,11 @@ def main():
         default="all_events.pkl",
         help="Output pkl (default: all_events.pkl)"
     )
+    ap.add_argument(
+        "--hist_pdf",
+        default=None,
+        help="Output PDF path for histogram of l1 lengths (default: <out stem>_l1_hist.pdf)"
+    )
 
     ap.add_argument(
         "--blacklist",
@@ -138,6 +144,13 @@ def main():
             type=int,
             default=1,
             help="Prefix before P arrival in seconds"
+        )
+
+    ap.add_argument(
+            "--min_len_threshold",
+            type=int,
+            default=1000,
+            help="Minimum event length"
         )
 
     args = ap.parse_args()
@@ -221,6 +234,7 @@ def main():
     dataframes = []
     labels = []
     filenames = []
+    lengths_l1 = []
     max_len = 0
     min_len = float('inf')
     for event_name in events.keys():
@@ -271,9 +285,15 @@ def main():
                 print(f"[ERROR] a problem with channel lengths {l1} {l2} {l3}")
                 statistics_skipped[event_type] += 1
                 continue
+
+            if l1 < args.min_len_threshold:
+                print(f"[ERROR] the event is shorter than the minimum allowed length.")
+                statistics_skipped[event_type] += 1
+                continue
             
             max_len = max(l1, max_len)
             min_len = min(l1, min_len)
+            lengths_l1.append(l1)
 
             for tr in st:
                 event_data[tr.stats.channel[-1]] = tr.data
@@ -302,6 +322,21 @@ def main():
     with open(args.out, "wb") as out_f:
         pickle.dump(final_data, out_f)
         print(f'{args.out} saved')
+
+    hist_pdf = Path(args.hist_pdf) if args.hist_pdf else Path(args.out).with_name(f"{Path(args.out).stem}_l1_hist.pdf")
+    if lengths_l1:
+        plt.figure(figsize=(8, 6))
+        plt.hist(lengths_l1, bins="auto", edgecolor="black")
+        plt.xlabel("l1 length")
+        plt.ylabel("Count")
+        plt.title("Histogram of l1 lengths")
+        plt.tight_layout()
+        plt.savefig(hist_pdf, format="pdf")
+        plt.close()
+        print(f"{hist_pdf} saved")
+    else:
+        print("[INFO] No valid l1 lengths collected; histogram PDF was not created.")
+
     print(f'Max length: {max_len}, Min length: {min_len}')
 if __name__ == "__main__":
     main()
