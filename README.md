@@ -18,6 +18,14 @@ These steps are designed to work together:
 
 ---
 
+## Data
+
+The SPF (Seismic Polygon Frenštát, 1992–2002) event data sets
+used in the IJRMMS manuscript are available on Zenodo (CC BY 4.0):
+https://doi.org/10.5281/zenodo.24010919 (`SPF.tar.gz`).
+
+---
+
 # Pipeline Structure
 
 Raw inputs:
